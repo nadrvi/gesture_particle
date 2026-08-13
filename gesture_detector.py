@@ -1,6 +1,6 @@
 """
 gesture_detector.py
-Gesture Classifier Presisi Tinggi untuk Single & Dual-Hand Combos.
+Extended Classifier dengan Pemisahan Presisi Gestur LOVE (I LOVE YOU) & ROCK ON.
 """
 
 from __future__ import annotations
@@ -43,12 +43,11 @@ class GestureClassifier:
     def _hand_scale(self, lm) -> float:
         return max(_dist(lm[WRIST], lm[MIDDLE_MCP]), 1e-5)
 
-    def _finger_states(self, lm, handedness: str) -> FingerState:
-        scale = self._hand_scale(lm)
-
+    def _finger_states(self, lm) -> FingerState:
         def is_extended(tip, mcp) -> bool:
             return (_dist(lm[WRIST], lm[tip]) / _dist(lm[WRIST], lm[mcp])) > 1.30
 
+        scale = self._hand_scale(lm)
         index = is_extended(INDEX_TIP, INDEX_MCP)
         middle = is_extended(MIDDLE_TIP, MIDDLE_MCP)
         ring = is_extended(RING_TIP, RING_MCP)
@@ -60,19 +59,45 @@ class GestureClassifier:
 
         return FingerState(thumb, index, middle, ring, pinky)
 
-    def classify(self, landmarks, handedness: str = "Right") -> str:
-        fingers = self._finger_states(landmarks, handedness)
+    def classify(self, landmarks) -> str:
+        f = self._finger_states(landmarks)
+        scale = self._hand_scale(landmarks)
 
-        if fingers.thumb and fingers.index and fingers.pinky and not fingers.middle and not fingers.ring:
+        thumb_index_dist = _dist(landmarks[THUMB_TIP], landmarks[INDEX_TIP]) / scale
+
+        # 1. LOVE SIGN (Ibu jari, telunjuk, kelingking mekar) -> Output: Teks "I LOVE YOU"
+        if f.thumb and f.index and f.pinky and not f.middle and not f.ring:
             raw_label = "LOVE"
-        elif not any((fingers.thumb, fingers.index, fingers.middle, fingers.ring, fingers.pinky)):
+
+        # 2. ROCK ON (Hanya telunjuk & kelingking mekar, ibu jari tertekuk) -> Output: Piramida 3D
+        elif not f.thumb and f.index and f.pinky and not f.middle and not f.ring:
+            raw_label = "ROCK_ON"
+
+        # 3. OK SIGN (Ibu jari & telunjuk bersentuhan, jari lain mekar)
+        elif thumb_index_dist < 0.35 and f.middle and f.ring:
+            raw_label = "OK_SIGN"
+
+        # 4. PEACE / VICTORY (Telunjuk & Jari Tengah Mekar)
+        elif f.index and f.middle and not f.ring and not f.pinky:
+            raw_label = "PEACE"
+
+        # 5. POINTING (Hanya Telunjuk Menunjuk)
+        elif f.index and not f.middle and not f.ring and not f.pinky:
+            raw_label = "POINTING"
+
+        # 6. FIST UP / DOWN (Semua Jari Menggepal)
+        elif not any((f.thumb, f.index, f.middle, f.ring, f.pinky)):
             if landmarks[MIDDLE_MCP].y < landmarks[WRIST].y:
                 raw_label = "FIST_UP"
             else:
                 raw_label = "FIST_DOWN"
-        elif self._is_c_shape(landmarks, fingers):
+
+        # 7. C SHAPE
+        elif self._is_c_shape(landmarks):
             raw_label = "C_SHAPE"
-        elif all((fingers.thumb, fingers.index, fingers.middle, fingers.ring, fingers.pinky)):
+
+        # 8. OPEN PALM (Semua Jari Terbuka)
+        elif all((f.thumb, f.index, f.middle, f.ring, f.pinky)):
             raw_label = "OPEN_PALM"
         else:
             raw_label = "UNKNOWN"
@@ -80,7 +105,7 @@ class GestureClassifier:
         self._history.append(raw_label)
         return self._stable_label()
 
-    def _is_c_shape(self, lm, fingers: FingerState) -> bool:
+    def _is_c_shape(self, lm) -> bool:
         scale = self._hand_scale(lm)
         ratios = [
             _dist(lm[WRIST], lm[INDEX_TIP]) / scale,
@@ -108,15 +133,18 @@ class GestureClassifier:
 
 
 def resolve_dual_hand_combo(g1: str, g2: str) -> str:
-    """Pemetaan Kombinasi 2 Tangan ke Mode Partikel."""
     combo = tuple(sorted([g1, g2]))
 
     COMBO_MAP = {
+        ("LOVE", "LOVE"): "TEXT",
         ("OPEN_PALM", "OPEN_PALM"): "SUPERNOVA",
         ("FIST_UP", "FIST_UP"): "BIG_HEART",
         ("FIST_DOWN", "FIST_DOWN"): "BLACK_HOLE",
+        ("PEACE", "PEACE"): "INFINITY_SIGN",
+        ("OK_SIGN", "OK_SIGN"): "DIAMOND_3D",
+        ("POINTING", "POINTING"): "CYLINDER_3D",
+        ("ROCK_ON", "ROCK_ON"): "PYRAMID_3D",
         ("C_SHAPE", "C_SHAPE"): "MARS",
-        ("LOVE", "LOVE"): "TEXT",
         ("FIST_UP", "OPEN_PALM"): "PLANET",
     }
 
